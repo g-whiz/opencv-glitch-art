@@ -5,7 +5,6 @@
 using namespace cv;
 
 typedef cv::Point3_<uint8_t> Pixel;
-const int CHAN = 0;
 
 int main(int argc, char **argv) {
     if ( argc != 2 )
@@ -21,26 +20,19 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    // Quantize the hue to 30 levels
-    // and the saturation to 32 levels
-    int chanBins = 256;
-    int histSize[] = {chanBins};
-    // RGB channels vary between 0 and 255
-    float chanRanges[] = { 0, 256 };
-    const float* ranges[] = { chanRanges };
-    MatND hist;
-    // we compute the histogram from the 0-th and 1-st channels
-    int channels[] = {0};
-    calcHist( &image, 1, channels, Mat(), // do not use mask
-              hist, 1, histSize, ranges,
-              true, // the histogram is uniform
-              false );
 
-    std::array<std::atomic_int, 256> indices;
+    std::array<std::atomic_int, 256> histogram, indices;
+    for (int i = 0; i < 256; i++) {
+        histogram[i].store(0);
+    }
+
+    image.forEach<Pixel>([&histogram](Pixel &p, const int *position) -> void {
+        histogram[p.x]++;
+    });
 
     int idx = 0;
     for (int i = 0; i < 256; i++) {
-        int nextIdx = idx + (int) hist.at<float>(i);
+        int nextIdx = idx + histogram[i].load();
         indices[i].store(idx);
         idx = nextIdx;
     }
@@ -49,12 +41,14 @@ int main(int argc, char **argv) {
     sortedImage = image.clone();
 
     image.forEach<Pixel>([&indices, &image, &sortedImage](Pixel &p, const int *position) -> void {
-        int newPosition[2];
-        int idx = indices[p.x].fetch_add(1);
+        int position2D[2];
+        //position of pixel in the 1D array of the sorted image's pixels
+        int position1D = indices[p.x].fetch_add(1);
 
-        newPosition[0] = idx % image.cols;
-        newPosition[1] = idx / image.cols;
-        sortedImage.at<Pixel>(newPosition) = p;
+        position2D[0] = position1D / image.cols;
+        position2D[1] = position1D % image.cols;
+        sortedImage.at<Pixel>(position2D).y = p.y;
+        sortedImage.at<Pixel>(position2D).z = p.z;
     });
 
     namedWindow("Display Image", WINDOW_GUI_EXPANDED );
